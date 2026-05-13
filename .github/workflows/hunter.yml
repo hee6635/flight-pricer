@@ -26,6 +26,13 @@ jobs:
           mkdir -p ~/.config/flight-pricer
           echo "api_key: ${{ secrets.DUFFEL_TOKEN }}" > ~/.config/flight-pricer/config.yaml
 
+      - name: Test Telegram Connection
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: |
+          python test_telegram.py
+
       - name: Search Flights
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
@@ -33,4 +40,3 @@ jobs:
         run: |
           # 10월 20일~25일 일정을 예시로 검색 (날짜는 원하시는 대로 수정 가능)
           python flight_pricer.py search --depart 2026-10-20 --return 2026-10-25
-
