@@ -3,15 +3,19 @@ import click
 import yaml
 import requests
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from tabulate import tabulate
+
+# --- 사용자 맞춤 설정 구역 ---
+ANCHOR_DATE = datetime(2026, 5, 15)  # 주간 1일차 기준일
+WORK_CYCLE = ["주간", "주간", "휴무", "휴무", "야간", "야간", "휴무", "휴무"] # 8일 주기
+# -------------------------
 
 CONFIG_DIR = os.path.expanduser("~/.config/flight-pricer")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.yaml")
 API_BASE_URL = "https://api.duffel.com/air/offer_requests"
 
 def get_api_key():
-    """Loads the API key from the config file."""
     try:
         with open(CONFIG_FILE, 'r') as f:
             config = yaml.safe_load(f)
@@ -19,148 +23,121 @@ def get_api_key():
     except (FileNotFoundError, yaml.YAMLError):
         return None
 
+def get_work_status(date_obj):
+    """특정 날짜의 근무 상태와 주기상 위치(0~7) 반환"""
+    days_diff = (date_obj.replace(hour=0, minute=0, second=0, microsecond=0) - ANCHOR_DATE).days
+    pos = days_diff % 8
+    return WORK_CYCLE[pos], pos
+
+def calculate_leave_days(dep_date_str, ret_date_str):
+    """여행 기간 중 소모되는 연차(주간/야간 근무일) 개수 계산"""
+    start = datetime.strptime(dep_date_str, "%Y-%m-%d")
+    end = datetime.strptime(ret_date_str, "%Y-%m-%d")
+    leave_count = 0
+    curr = start
+    while curr <= end:
+        status, _ = get_work_status(curr)
+        if status in ["주간", "야간"]:
+            leave_count += 1
+        curr += timedelta(days=1)
+    return leave_count
+
 def format_datetime(dt_string):
-    """Formats ISO datetime string to a readable format."""
-    if not dt_string:
-        return "N/A"
-    dt_obj = datetime.fromisoformat(dt_string)
-    return dt_obj.strftime('%Y-%m-%d %I:%M %p')
+    if not dt_string: return "N/A"
+    dt_obj = datetime.fromisoformat(dt_string.replace('Z', ''))
+    return dt_obj
 
-def format_duration(duration_string):
-    """Formats ISO 8601 duration string like 'PT2H38M' to '2h 38m'."""
-    if not duration_string or not duration_string.startswith('PT'):
-        return "N/A"
-    duration_string = duration_string[2:]
-    h_part = "0h"
-    m_part = "0m"
-    if 'H' in duration_string:
-        parts = duration_string.split('H')
-        h_part = f"{parts[0]}h"
-        duration_string = parts[1]
-    if 'M' in duration_string:
-        m_part = f"{duration_string.replace('M', '')}m"
-    return f"{h_part} {m_part}"
-
-
-def display_offers(offers):
-    """Parses and displays flight offers in a table."""
-    headers = ["Airline", "Flight No.", "Depart", "Arrive", "Duration", "Price"]
+def display_offers(offers, dep_date, ret_date):
+    headers = ["Airline", "Flight No.", "Depart", "Arrive", "Leave", "Price"]
     table_data = []
+    
+    # 필요 연차 미리 계산
+    leave_needed = calculate_leave_days(dep_date, ret_date)
 
     for offer in offers:
         airline = offer['owner']['name']
-        price = f"{offer['total_amount']} {offer['total_currency']}"
+        price = f"{float(offer['total_amount']):,.0f} {offer['total_currency']}"
         
-        # Assuming one slice for now for simplicity
-        if offer['slices']:
-            slice_info = offer['slices'][0]
-            duration = format_duration(slice_info.get('duration'))
-            if slice_info['segments']:
-                segment = slice_info['segments'][0]
-                flight_no = f"{segment['marketing_carrier']['iata_code']}{segment['marketing_carrier_flight_number']}"
-                depart = format_datetime(segment.get('departing_at'))
-                arrive = format_datetime(segment.get('arriving_at'))
-            else:
-                flight_no, depart, arrive = "N/A", "N/A", "N/A"
-        else:
-            duration, flight_no, depart, arrive = "N/A", "N/A", "N/A", "N/A"
+        if not offer['slices']: continue
+        
+        # 왕복 기준: 0번은 가는 편, 1번은 오는 편
+        outbound = offer['slices'][0]['segments'][0]
+        inbound = offer['slices'][1]['segments'][0] if len(offer['slices']) > 1 else None
+        
+        dep_time = format_datetime(outbound.get('departing_at'))
+        ret_time = format_datetime(inbound.get('departing_at')) if inbound else None
+
+        # --- 근무표 필터링 로직 ---
+        # 1. 야간 퇴근 당일(주기 7일차, index 6)은 오전 11시 이후 출발만 가능
+        _, dep_pos = get_work_status(dep_time)
+        if dep_pos == 6 and dep_time.hour < 11:
+            continue
             
-        table_data.append([airline, flight_no, depart, arrive, duration, price])
+        # 2. 복귀 비행기(나트랑 출발)는 밤 21시(9 PM) 이후여야 함
+        if ret_time and ret_time.hour < 21:
+            continue
+
+        flight_no = f"{outbound['marketing_carrier']['iata_code']}{outbound['marketing_carrier_flight_number']}"
+        
+        table_data.append([
+            airline, 
+            flight_no, 
+            dep_time.strftime('%m/%d %H:%M'), 
+            ret_time.strftime('%m/%d %H:%M') if ret_time else "N/A",
+            f"{leave_needed}개",
+            price
+        ])
 
     if not table_data:
-        click.echo("No flight offers found.")
+        click.echo("⚠️ 조건(근무표/시간)에 맞는 항공권이 없습니다.")
         return
 
     click.echo(tabulate(table_data, headers=headers, tablefmt="grid"))
 
-
 @click.group()
-def cli():
-    """A CLI tool to price flights."""
-    pass
-
-@cli.group()
-def config():
-    """Manage the flight-pricer configuration."""
-    pass
-
-@config.command()
-@click.option('--api-key', 'api_key', required=True, help='Your flight search API key.')
-def set(api_key):
-    """Sets and saves the API key."""
-    os.makedirs(CONFIG_DIR, exist_ok=True)
-    config_data = {'api_key': api_key}
-    with open(CONFIG_FILE, 'w') as f:
-        yaml.dump(config_data, f)
-    click.echo(f"Configuration saved to {CONFIG_FILE}")
+def cli(): pass
 
 @cli.command()
-@click.option('--from', 'from_iata', required=True, help='Departure airport IATA code.')
-@click.option('--to', 'to_iata', required=True, help='Arrival airport IATA code.')
-@click.option('--depart', 'depart_date', required=True, help='Departure date (YYYY-MM-DD).')
-@click.option('--return', 'return_date', help='Return date for round-trip (YYYY-MM-DD).')
-@click.option('--passengers', default=1, type=int, help='Number of passengers.')
-@click.option('--max-stops', 'max_connections', default=None, type=int, help='Maximum number of stops (0 for non-stop).')
-@click.option('--non-stop', 'non_stop_flag', is_flag=True, help='Alias for --max-stops 0.')
-@click.option('--cabin', 'cabin_class', type=click.Choice(['economy', 'business', 'first', 'premium_economy']), help='Cabin class.')
-def search(from_iata, to_iata, depart_date, return_date, passengers, max_connections, non_stop_flag, cabin_class):
-    """Searches for flight prices with the specified criteria."""
+@click.option('--from', 'from_iata', default="PUS", help='출발 공항 (기본: PUS/김해)')
+@click.option('--to', 'to_iata', default="CXR", help='도착 공항 (기본: CXR/나트랑)')
+@click.option('--depart', 'depart_date', required=True, help='출발일 (YYYY-MM-DD)')
+@click.option('--return', 'return_date', required=True, help='귀국일 (YYYY-MM-DD)')
+def search(from_iata, to_iata, depart_date, return_date):
+    """4인 가족 & 근무표 맞춤형 항공권 검색"""
     api_key = get_api_key()
     if not api_key:
-        click.echo("API key not found. Please configure it using 'flight-pricer config set --api-key YOUR_KEY'")
+        click.echo("API 키를 먼저 설정하세요.")
         return
 
-    final_max_connections = max_connections
-    if non_stop_flag:
-        final_max_connections = 0
-
     headers = {
-        "Accept-Encoding": "gzip",
-        "Accept": "application/json",
         "Content-Type": "application/json",
         "Duffel-Version": "v2",
         "Authorization": f"Bearer {api_key}"
     }
 
-    slices = [
-        {"origin": from_iata, "destination": to_iata, "departure_date": depart_date}
-    ]
-    if return_date:
-        slices.append({"origin": to_iata, "destination": from_iata, "departure_date": return_date})
-
-    passenger_list = [{"type": "adult"}] * passengers
+    # 4인 가족 설정 (성인 2, 아동 2)
+    passenger_list = [{"type": "adult"}, {"type": "adult"}, {"type": "child"}, {"type": "child"}]
 
     payload = {
         "data": {
-            "slices": slices,
-            "passengers": passenger_list
+            "slices": [
+                {"origin": from_iata, "destination": to_iata, "departure_date": depart_date},
+                {"origin": to_iata, "destination": from_iata, "departure_date": return_date}
+            ],
+            "passengers": passenger_list,
+            "cabin_class": "economy"
         }
     }
     
-    if cabin_class:
-        payload['data']['cabin_class'] = cabin_class
-    if final_max_connections is not None:
-        payload['data']['max_connections'] = final_max_connections
-    
-    click.echo("Searching for flights...")
+    click.echo(f"🔍 {depart_date} ~ {return_date} (4인 가족) 검색 중...")
     
     try:
         response = requests.post(API_BASE_URL, headers=headers, json=payload)
         response.raise_for_status()
-        
-        response_data = response.json()
-        offers = response_data.get('data', {}).get('offers', [])
-        display_offers(offers)
-
-    except requests.exceptions.HTTPError as err:
-        click.echo(f"HTTP Error: {err}")
-        click.echo("--- Error Response Body ---")
-        try:
-            click.echo(json.dumps(err.response.json(), indent=2))
-        except json.JSONDecodeError:
-            click.echo(err.response.text)
-    except requests.exceptions.RequestException as e:
-        click.echo(f"An error occurred: {e}")
+        offers = response.json().get('data', {}).get('offers', [])
+        display_offers(offers, depart_date, return_date)
+    except Exception as e:
+        click.echo(f"오류 발생: {e}")
 
 if __name__ == '__main__':
     cli()
