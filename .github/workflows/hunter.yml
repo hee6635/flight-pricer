@@ -1,9 +1,9 @@
-name: Bangkok Flight Hunter (High Speed)
+name: Bangkok Flight Hunter (Big Data Version)
 
 on:
   schedule:
-    - cron: '*/30 * * * *' # 30분마다 한 번씩 실행 (초정밀 감시)
-  workflow_dispatch:      # 즉시 실행 버튼
+    - cron: '*/30 * * * *' 
+  workflow_dispatch:      
 
 jobs:
   hunt:
@@ -19,21 +19,18 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install requests click tabulate
+          pip install requests click tabulate gspread oauth2client
 
       - name: Search Google Flights
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
-          # 1번부터 8번 키까지 모두 대응 가능하도록 설정
+          # 구글 시트 인증용 JSON (PDF 가이드 참조)
+          GSPREAD_SERVICE_ACCOUNT: ${{ secrets.GSPREAD_SERVICE_ACCOUNT }}
+          # SerpApi 키 로테이션
           SERPAPI_KEY_1: ${{ secrets.SERPAPI_KEY_1 }}
           SERPAPI_KEY_2: ${{ secrets.SERPAPI_KEY_2 }}
           SERPAPI_KEY_3: ${{ secrets.SERPAPI_KEY_3 }}
           SERPAPI_KEY_4: ${{ secrets.SERPAPI_KEY_4 }}
-          SERPAPI_KEY_5: ${{ secrets.SERPAPI_KEY_5 }}
-          SERPAPI_KEY_6: ${{ secrets.SERPAPI_KEY_6 }}
-          SERPAPI_KEY_7: ${{ secrets.SERPAPI_KEY_7 }}
-          SERPAPI_KEY_8: ${{ secrets.SERPAPI_KEY_8 }}
         run: |
-          # 이미지 조건: 부산-방콕, 6/3 ~ 6/8
           python flight_pricer.py search --depart 2026-06-03 --return 2026-06-08
