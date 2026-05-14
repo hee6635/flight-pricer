@@ -2,13 +2,8 @@ import os
 import click
 import requests
 import random
-from datetime import datetime, timedelta
+from datetime import datetime
 from tabulate import tabulate
-
-# --- 아빠의 근무 일정 기반 설정 ---
-ANCHOR_DATE = datetime(2026, 5, 15)  # 주간 1일차 기준일
-WORK_CYCLE = ["주간", "주간", "휴무", "휴무", "야간", "야간", "휴무", "휴무"] #
-# -------------------------
 
 def send_telegram(message):
     token = os.getenv("TELEGRAM_TOKEN")
@@ -23,23 +18,6 @@ def get_serpapi_key():
     valid_keys = [k for k in keys if k]
     return random.choice(valid_keys) if valid_keys else None
 
-def get_work_status(date_obj):
-    days_diff = (date_obj.replace(hour=0, minute=0, second=0, microsecond=0) - ANCHOR_DATE).days
-    pos = days_diff % 8
-    return WORK_CYCLE[pos], pos
-
-def calculate_leave_days(dep_date_str, ret_date_str):
-    start = datetime.strptime(dep_date_str, "%Y-%m-%d")
-    end = datetime.strptime(ret_date_str, "%Y-%m-%d")
-    leave_count = 0
-    curr = start
-    while curr <= end:
-        status, _ = get_work_status(curr)
-        if status in ["주간", "야간"]:
-            leave_count += 1
-        curr += timedelta(days=1)
-    return leave_count
-
 @click.group()
 def cli(): pass
 
@@ -53,6 +31,8 @@ def search(from_iata, to_iata, depart_date, return_date):
     if not api_key:
         click.echo("⚠️ SERPAPI_KEY가 등록되지 않았습니다.")
         return
+
+    click.echo(f"📡 [근무표 제외] 구글 플라이트 모든 항공편 검색 중...")
 
     # 성인 2명 실거래가 검색
     params = {
@@ -74,10 +54,9 @@ def search(from_iata, to_iata, depart_date, return_date):
         return
 
     all_flights = data.get("best_flights", []) + data.get("other_flights", [])
-    leave_needed = calculate_leave_days(depart_date, return_date)
     
     table_data = []
-    telegram_msg = f"⚡ *[긴급] 방콕 특가 사냥 보고 (30분 간격)*\n📅 {depart_date} ~ {return_date}\n🌴 필요 연차: {leave_needed}개\n\n"
+    telegram_msg = f"⚡ *[🚨초비상] 방콕 전수조사 보고 (30분 간격)*\n📅 {depart_date} ~ {return_date}\n\n"
     found_valid = False
 
     for item in all_flights:
@@ -87,20 +66,19 @@ def search(from_iata, to_iata, depart_date, return_date):
         
         outbound = flights[0]
         airline = outbound.get("airline", "Unknown")
-        dep_time_str = outbound.get("departure_airport", {}).get("time")
+        dep_time_str = outbound.get("departure_airport", {}).get("time") # "2026-06-03 18:55" 형태
         
-        try:
-            dep_time = datetime.strptime(dep_time_str, "%Y-%m-%d %H:%M")
-        except: continue
-
-        # 야간 퇴근 당일(주기 7일차) 오전 출발 필터링
-        _, dep_pos = get_work_status(dep_time)
-        if dep_pos == 6 and dep_time.hour < 11: continue
+        if not dep_time_str: continue
 
         found_valid = True
         price_str = f"{price:,.0f}원"
-        dep_str = dep_time.strftime('%m/%d %H:%M')
         
+        try:
+            dep_time = datetime.strptime(dep_time_str, "%Y-%m-%d %H:%M")
+            dep_str = dep_time.strftime('%m/%d %H:%M')
+        except:
+            dep_str = dep_time_str # 포맷팅 실패시 원본 문자열 사용
+
         table_data.append([airline, dep_str, price_str])
         telegram_msg += f"✈️ *{airline}*\n💰 *{price_str}*\n🛫 출발: {dep_str}\n\n"
 
@@ -109,7 +87,7 @@ def search(from_iata, to_iata, depart_date, return_date):
         telegram_msg += "🔗 [지금 바로 확인 및 예약](https://www.google.com/travel/flights)"
         send_telegram(telegram_msg)
     else:
-        click.echo("⚠️ 조건에 맞는 최저가 항공권이 현재 없습니다.")
+        click.echo("⚠️ 현재 조회 가능한 항공권이 없습니다.")
 
 if __name__ == '__main__':
     cli()
