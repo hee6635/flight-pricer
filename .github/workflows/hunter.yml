@@ -1,9 +1,9 @@
-name: Nhatrang Flight Hunter
+name: Bangkok Flight Hunter (High Speed)
 
 on:
   schedule:
-    - cron: '0 */4 * * *' # 4시간마다 한 번씩 실행
-  workflow_dispatch:      # 원할 때 수동으로도 실행 가능
+    - cron: '*/30 * * * *' # 30분마다 한 번씩 실행 (초정밀 감시)
+  workflow_dispatch:      # 즉시 실행 버튼
 
 jobs:
   hunt:
@@ -19,24 +19,21 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install requests click pyyaml tabulate
+          pip install requests click tabulate
 
-      - name: Create Config
-        run: |
-          mkdir -p ~/.config/flight-pricer
-          echo "api_key: ${{ secrets.DUFFEL_TOKEN }}" > ~/.config/flight-pricer/config.yaml
-
-      - name: Test Telegram Connection
+      - name: Search Google Flights
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
+          # 1번부터 8번 키까지 모두 대응 가능하도록 설정
+          SERPAPI_KEY_1: ${{ secrets.SERPAPI_KEY_1 }}
+          SERPAPI_KEY_2: ${{ secrets.SERPAPI_KEY_2 }}
+          SERPAPI_KEY_3: ${{ secrets.SERPAPI_KEY_3 }}
+          SERPAPI_KEY_4: ${{ secrets.SERPAPI_KEY_4 }}
+          SERPAPI_KEY_5: ${{ secrets.SERPAPI_KEY_5 }}
+          SERPAPI_KEY_6: ${{ secrets.SERPAPI_KEY_6 }}
+          SERPAPI_KEY_7: ${{ secrets.SERPAPI_KEY_7 }}
+          SERPAPI_KEY_8: ${{ secrets.SERPAPI_KEY_8 }}
         run: |
-          python test_telegram.py
-
-      - name: Search Flights
-        env:
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          CHAT_ID: ${{ secrets.CHAT_ID }}
-        run: |
-          # 10월 20일~25일 일정을 예시로 검색 (날짜는 원하시는 대로 수정 가능)
-          python flight_pricer.py search --depart 2026-10-20 --return 2026-10-25
+          # 이미지 조건: 부산-방콕, 6/3 ~ 6/8
+          python flight_pricer.py search --depart 2026-06-03 --return 2026-06-08
