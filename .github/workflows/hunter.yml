@@ -1,14 +1,14 @@
-name: Bangkok Flight Hunter (Big Data Version)
+name: Bangkok Flight Hunter (Google Signal Version)
 
 on:
-  schedule:
-    - cron: '*/30 * * * *' 
-  workflow_dispatch:      
+  workflow_dispatch:      # 깃허브에서 직접 수동으로 돌릴 때
+  repository_dispatch:    # 구글 앱스 스크립트가 30분마다 찌를 때
+    types: [manual_signal]
 
 jobs:
   hunt:
     runs-on: ubuntu-latest
-    # 여기에 TZ 설정을 추가하면 서버의 시계가 한국으로 맞춰집니다.
+    # 한국 시간(KST)으로 맞춰서 시트에 예쁘게 찍히게 하는 마법의 한 줄!
     env:
       TZ: Asia/Seoul
 
@@ -34,5 +34,6 @@ jobs:
           SERPAPI_KEY_2: ${{ secrets.SERPAPI_KEY_2 }}
           SERPAPI_KEY_3: ${{ secrets.SERPAPI_KEY_3 }}
           SERPAPI_KEY_4: ${{ secrets.SERPAPI_KEY_4 }}
+        # 출발일과 도착일이 맞는지 한 번 더 확인해 주세요!
         run: |
           python flight_pricer.py search --depart 2026-06-03 --return 2026-06-08
